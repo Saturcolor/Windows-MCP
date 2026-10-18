@@ -243,8 +243,16 @@ def AbsoluteMouseEvent(buttonFlag: int, x: int, y: int) -> None:
     )
 
 
+# Alt sent with KEYEVENTF_EXTENDEDKEY is the RIGHT Alt. On layouts with AltGr (French AZERTY,
+# German QWERTZ, ...) Windows turns right Alt into Ctrl+Alt, so Alt+Left reached applications as
+# AltGr+Left and did nothing (Explorer Back, Alt+D). The left Alt key is never an extended key.
+_NEVER_EXTENDED = (0x12, 0xA4)  # VK_MENU, VK_LMENU
+
+
 def keybd_event(bVk: int, bScan: int, dwFlags: int, dwExtraInfo: int) -> None:
     """keybd_event from Win32."""
+    if bVk in _NEVER_EXTENDED:
+        dwFlags &= ~0x1  # KEYEVENTF_EXTENDEDKEY
     ctypes.windll.user32.keybd_event(bVk, bScan, dwFlags, dwExtraInfo)
 
 
