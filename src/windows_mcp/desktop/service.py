@@ -29,6 +29,7 @@ import math
 import win32process
 import win32gui
 import win32con
+import win32clipboard
 import requests
 import logging
 import random
@@ -57,6 +58,37 @@ _KEY_ALIASES = {
 def _snapshot_profile_enabled() -> bool:
     value = os.getenv("WINDOWS_MCP_PROFILE_SNAPSHOT", "")
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# CF_TEXT, CF_OEMTEXT, CF_UNICODETEXT and CF_LOCALE (which Windows adds to text by itself).
+_TEXT_CLIPBOARD_FORMATS = (1, 7, 13, 16)
+
+
+def _clipboard_holds_only_text() -> bool:
+    """True when the clipboard is empty or holds text only, so a paste can save and restore it.
+
+    Files cut in Explorer (CF_HDROP), images or rich content are not text: overwriting them to paste
+    would lose them, since only text is restored. An unreadable clipboard counts as not text.
+    """
+    try:
+        win32clipboard.OpenClipboard()
+    except Exception:
+        return False
+    try:
+        fmt = 0
+        while True:
+            fmt = win32clipboard.EnumClipboardFormats(fmt)
+            if not fmt:
+                return True
+            if fmt not in _TEXT_CLIPBOARD_FORMATS:
+                return False
+    except Exception:
+        return False
+    finally:
+        try:
+            win32clipboard.CloseClipboard()
+        except Exception:
+            pass
 
 
 def _escape_text_for_sendkeys(text: str) -> str:
@@ -797,9 +829,14 @@ class Desktop:
             uia.SendKeys("{Back}", waitTime=0.05)
             owner.record_step_current()
         # Per-key SendKeys for short text (so escape sequences keep working);
-        # clipboard paste for long text (so the scan-code queue can't race).
+        # clipboard paste for long text (so the scan-code queue can't race),
+        # unless the clipboard holds something a paste would destroy (files, images).
         has_control_chars = any(c in text for c in ("\n", "\t", "{", "}"))
-        if len(text) >= self._LONG_TEXT_PASTE_THRESHOLD and not has_control_chars:
+        if (
+            len(text) >= self._LONG_TEXT_PASTE_THRESHOLD
+            and not has_control_chars
+            and _clipboard_holds_only_text()
+        ):
             self._paste_text(text)
         else:
             # Bump interval from 0.02 → 0.04. Keeps short-text speed acceptable
